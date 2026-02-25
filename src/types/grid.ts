@@ -19,6 +19,8 @@ export interface RobotStats {
   color: string;
   cellsTraversed: number;
   trashCollected: number;
+  visitedCells: { x: number; y: number }[];
+  cleanedCells: { x: number; y: number }[];
 }
 
 export interface GridState {

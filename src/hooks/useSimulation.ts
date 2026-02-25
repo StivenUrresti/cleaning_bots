@@ -103,7 +103,12 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
   const [stats, setStats] = useState<RobotStats[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const gridRef = useRef<GridState | null>(grid);
-  const statsRef = useRef<Map<string, { cellsTraversed: number; trashCollected: number }>>(new Map());
+  const statsRef = useRef<Map<string, {
+    cellsTraversed: number;
+    trashCollected: number;
+    visitedCells: { x: number; y: number }[];
+    cleanedCells: { x: number; y: number }[];
+  }>>(new Map());
 
   useEffect(() => { gridRef.current = grid; }, [grid]);
 
@@ -120,9 +125,11 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
     const assignment = assignTargets(g.robots, dirtyCells);
     const robots = g.robots.map((r) => ({ ...r, targets: assignment.get(r.id) ?? [] }));
 
-    // Init stats tracking
-    const sm = new Map<string, { cellsTraversed: number; trashCollected: number }>();
-    for (const r of robots) sm.set(r.id, { cellsTraversed: 0, trashCollected: 0 });
+    const sm = new Map<string, {
+      cellsTraversed: number; trashCollected: number;
+      visitedCells: { x: number; y: number }[]; cleanedCells: { x: number; y: number }[];
+    }>();
+    for (const r of robots) sm.set(r.id, { cellsTraversed: 0, trashCollected: 0, visitedCells: [{ x: r.x, y: r.y }], cleanedCells: [] });
     statsRef.current = sm;
 
     return { ...g, robots };
@@ -150,7 +157,10 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
         // Clean this cell
         nextCells[robot.y][robot.x] = { ...cell, dirty: false, trailColors: cell.trailColors };
         const s = sm.get(robot.id);
-        if (s) s.trashCollected++;
+        if (s) {
+          s.trashCollected++;
+          s.cleanedCells.push({ x: robot.x, y: robot.y });
+        }
         // Remove this cell from ALL robots' targets (another robot may have it too, or passed through)
         for (const r of nextRobots) {
           r.targets = r.targets.filter((t) => !(t.x === robot.x && t.y === robot.y));
@@ -175,7 +185,7 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
             robot.x = next.x;
             robot.y = next.y;
             const s = sm.get(robot.id);
-            if (s) s.cellsTraversed++;
+            if (s) { s.cellsTraversed++; s.visitedCells.push({ x: next.x, y: next.y }); }
           }
         } else {
           // Idle: wander randomly to clear paths for other robots
@@ -190,7 +200,7 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
             robot.x = pick.x;
             robot.y = pick.y;
             const s = sm.get(robot.id);
-            if (s) s.cellsTraversed++;
+            if (s) { s.cellsTraversed++; s.visitedCells.push({ x: pick.x, y: pick.y }); }
           }
         }
       }
@@ -242,8 +252,12 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
       setCleaningComplete(true);
       // Build final stats
       const finalStats: RobotStats[] = nextRobots.map((r) => {
-        const s = sm.get(r.id) ?? { cellsTraversed: 0, trashCollected: 0 };
-        return { id: r.id, color: r.color, cellsTraversed: s.cellsTraversed, trashCollected: s.trashCollected };
+        const s = sm.get(r.id) ?? { cellsTraversed: 0, trashCollected: 0, visitedCells: [], cleanedCells: [] };
+        return {
+          id: r.id, color: r.color,
+          cellsTraversed: s.cellsTraversed, trashCollected: s.trashCollected,
+          visitedCells: s.visitedCells, cleanedCells: s.cleanedCells,
+        };
       });
       setStats(finalStats);
     }
