@@ -1,4 +1,4 @@
-import { Play, Pause, RotateCcw } from 'lucide-react';
+import { Play, Pause, RotateCcw, History } from 'lucide-react';
 import type { GridState } from '../types/grid';
 
 export const SPEED_MS_MIN = 150;
@@ -17,10 +17,12 @@ interface ConfigPanelProps {
   onReset: () => void;
   playing: boolean;
   grid: GridState | null;
+  onShowHistory?: () => void;
+  historyCount?: number;
 }
 
-const MIN = 3;
-const MAX = 16;
+const MIN = 2;
+const MAX = 100;
 
 function clampSpeed(ms: number) {
   return Math.min(SPEED_MS_MAX, Math.max(SPEED_MS_MIN, ms));
@@ -39,6 +41,8 @@ export function ConfigPanel({
   onReset,
   playing,
   grid,
+  onShowHistory,
+  historyCount = 0,
 }: ConfigPanelProps) {
   const robotCount = grid?.robots.length ?? 0;
   const totalCells = grid ? grid.cols * grid.rows : 0;
@@ -124,6 +128,24 @@ export function ConfigPanel({
         <RotateCcw className="w-4 h-4" />
         Reset
       </button>
+      {onShowHistory && (
+        <>
+          <div className="h-6 w-px bg-gray-600" />
+          <button
+            type="button"
+            onClick={onShowHistory}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-medium transition-colors"
+          >
+            <History className="w-4 h-4" />
+            Historial
+            {historyCount > 0 && (
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-cyan-600 text-[10px] font-bold text-white">
+                {historyCount}
+              </span>
+            )}
+          </button>
+        </>
+      )}
       {grid && (
         <div className="text-gray-500 text-sm ml-auto">
           Robots: <span className="text-cyan-400 font-medium">{robotCount}</span>

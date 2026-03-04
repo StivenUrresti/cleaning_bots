@@ -4,53 +4,42 @@ import type { Cell as CellType, Robot } from '../types/grid';
 interface CellProps {
   cell: CellType;
   robot?: Robot | null;
+  size?: number;
 }
 
-export function Cell({ cell, robot }: CellProps) {
+export function Cell({ cell, robot, size = 44 }: CellProps) {
   const isDirty = cell.dirty;
   const hasRobot = !!robot;
-  const trailColors = cell.trailColors;
-
-  // Build trail background: blend the last trail color at low opacity
-  const trailBg = trailColors.length > 0
-    ? trailColors[trailColors.length - 1] + '30' // hex with ~19% alpha
-    : undefined;
+  const justCleaned = cell.justCleaned;
+  const iconSize = Math.max(10, Math.floor(size * 0.55));
+  const borderRadius = Math.max(4, Math.min(8, Math.floor(size * 0.18)));
 
   return (
     <div
       className={`
-        relative flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg
-        border border-gray-700/80 transition-all duration-300
-        ${isDirty ? 'bg-amber-950/40 border-amber-700/50' : 'bg-gray-800/60'}
+        relative flex items-center justify-center
+        border transition-all duration-300
+        ${isDirty ? 'bg-amber-950/40 border-amber-700/50' : ''}
+        ${justCleaned ? 'bg-emerald-900/30 border-emerald-600/50 animate-pulse' : ''}
+        ${!isDirty && !justCleaned ? 'bg-gray-800/60 border-gray-700/80' : ''}
       `}
       style={{
-        backgroundColor: !isDirty && trailBg ? trailBg : undefined,
-        boxShadow: hasRobot ? `0 0 0 2px ${robot!.color}66, 0 0 8px ${robot!.color}33` : undefined,
+        width: size,
+        height: size,
+        borderRadius,
+        boxShadow: hasRobot ? `0 0 0 2px ${robot!.color}88, 0 0 12px ${robot!.color}44` : undefined,
       }}
     >
-      {/* Trail dots for multi-robot overlap */}
-      {trailColors.length > 1 && !isDirty && (
-        <div className="absolute bottom-0.5 left-0.5 flex gap-0.5">
-          {trailColors.slice(0, 4).map((c, i) => (
-            <span
-              key={i}
-              className="w-1.5 h-1.5 rounded-full"
-              style={{ backgroundColor: c }}
-            />
-          ))}
-        </div>
-      )}
-      {isDirty && (
+      {isDirty && !hasRobot && (
         <Sparkles
-          className="absolute w-5 h-5 text-amber-400/90 animate-pulse"
-          aria-label="Sucio"
+          className="text-amber-400/90 animate-pulse"
+          style={{ width: iconSize, height: iconSize }}
         />
       )}
       {hasRobot && (
         <Bot
-          className="w-7 h-7 drop-shadow-md animate-[pulse_2s_ease-in-out_infinite]"
-          style={{ color: robot!.color }}
-          aria-label="Robot"
+          className="drop-shadow-lg teleport-in"
+          style={{ color: robot!.color, width: iconSize, height: iconSize }}
         />
       )}
     </div>

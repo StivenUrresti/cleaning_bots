@@ -3,7 +3,7 @@ export interface Cell {
   x: number;
   y: number;
   dirty: boolean;
-  trailColors: string[];
+  justCleaned: boolean;
 }
 
 export interface Robot {
@@ -12,14 +12,13 @@ export interface Robot {
   y: number;
   color: string;
   targets: { x: number; y: number }[];
+  idle: boolean;
 }
 
 export interface RobotStats {
   id: string;
   color: string;
-  cellsTraversed: number;
   trashCollected: number;
-  visitedCells: { x: number; y: number }[];
   cleanedCells: { x: number; y: number }[];
 }
 

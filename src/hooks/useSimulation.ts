@@ -1,30 +1,42 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { GridState, Robot, RobotStats } from '../types/grid';
+import { findSimilarSessions } from '../utils/history';
 
 function manhattan(ax: number, ay: number, bx: number, by: number) {
   return Math.abs(ax - bx) + Math.abs(ay - by);
 }
 
+type Pos = { x: number; y: number };
+
+function assignmentCost(assignment: Map<string, Pos[]>): number {
+  let max = 0;
+  for (const q of assignment.values()) {
+    if (q.length > max) max = q.length;
+  }
+  return max;
+}
+
 /**
- * Greedy nearest-neighbor assignment: assign every dirty cell to a robot.
- * Each robot gets a queue of targets ordered by visit sequence (nearest first, then nearest to that, etc.).
+ * Balanced round-robin nearest-neighbor with per-robot cap.
  */
-function assignTargets(
+function assignBalanced(
   robots: Robot[],
-  dirtyCells: { x: number; y: number }[]
-): Map<string, { x: number; y: number }[]> {
-  const assignment = new Map<string, { x: number; y: number }[]>();
+  dirtyCells: Pos[],
+  cap: number,
+): Map<string, Pos[]> {
+  const assignment = new Map<string, Pos[]>();
   for (const r of robots) assignment.set(r.id, []);
-
   const remaining = [...dirtyCells];
+  let maxPerRobot = cap;
 
-  // Round-robin: each robot picks its nearest unassigned dirty cell, repeat until none left
   while (remaining.length > 0) {
+    let assigned = false;
     for (const robot of robots) {
       if (remaining.length === 0) break;
       const queue = assignment.get(robot.id)!;
-      const from = queue.length > 0 ? queue[queue.length - 1] : { x: robot.x, y: robot.y };
+      if (queue.length >= maxPerRobot) continue;
 
+      const from = queue.length > 0 ? queue[queue.length - 1] : { x: robot.x, y: robot.y };
       let bestIdx = 0;
       let bestDist = manhattan(from.x, from.y, remaining[0].x, remaining[0].y);
       for (let i = 1; i < remaining.length; i++) {
@@ -33,65 +45,178 @@ function assignTargets(
       }
       queue.push(remaining[bestIdx]);
       remaining.splice(bestIdx, 1);
+      assigned = true;
     }
+    if (!assigned && remaining.length > 0) maxPerRobot++;
   }
 
   return assignment;
 }
 
 /**
- * Move one step toward target (Manhattan movement).
- * Priority: primary axis, secondary axis, then detour moves (perpendicular) to avoid deadlock.
+ * Global nearest: each dirty cell goes to the robot whose last
+ * assigned position is closest.
  */
-function stepToward(
-  rx: number, ry: number,
-  tx: number, ty: number,
-  occupied: Set<string>,
-  cols: number, rows: number,
-): { x: number; y: number } | null {
-  const dx = tx - rx;
-  const dy = ty - ry;
+function assignGlobalNearest(
+  robots: Robot[],
+  dirtyCells: Pos[],
+): Map<string, Pos[]> {
+  const assignment = new Map<string, Pos[]>();
+  for (const r of robots) assignment.set(r.id, []);
+  const remaining = [...dirtyCells];
 
-  const moves: { x: number; y: number }[] = [];
+  while (remaining.length > 0) {
+    let bestRobot = robots[0];
+    let bestCellIdx = 0;
+    let bestDist = Infinity;
 
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    if (dx !== 0) moves.push({ x: rx + Math.sign(dx), y: ry });
-    if (dy !== 0) moves.push({ x: rx, y: ry + Math.sign(dy) });
-    // Detour: try perpendicular directions to get around obstacles
-    if (dy === 0) {
-      moves.push({ x: rx, y: ry + 1 });
-      moves.push({ x: rx, y: ry - 1 });
-    } else if (dx === 0) {
-      moves.push({ x: rx + 1, y: ry });
-      moves.push({ x: rx - 1, y: ry });
+    for (const robot of robots) {
+      const queue = assignment.get(robot.id)!;
+      const from = queue.length > 0 ? queue[queue.length - 1] : { x: robot.x, y: robot.y };
+      for (let i = 0; i < remaining.length; i++) {
+        const d = manhattan(from.x, from.y, remaining[i].x, remaining[i].y);
+        if (d < bestDist) {
+          bestDist = d;
+          bestRobot = robot;
+          bestCellIdx = i;
+        }
+      }
     }
-  } else {
-    if (dy !== 0) moves.push({ x: rx, y: ry + Math.sign(dy) });
-    if (dx !== 0) moves.push({ x: rx + Math.sign(dx), y: ry });
-    if (dx === 0) {
-      moves.push({ x: rx + 1, y: ry });
-      moves.push({ x: rx - 1, y: ry });
-    } else if (dy === 0) {
-      moves.push({ x: rx, y: ry + 1 });
-      moves.push({ x: rx, y: ry - 1 });
+
+    assignment.get(bestRobot.id)!.push(remaining[bestCellIdx]);
+    remaining.splice(bestCellIdx, 1);
+  }
+
+  return assignment;
+}
+
+/**
+ * Insert random "search" steps (clean cells) before each real target.
+ * Robots that have fewer targets get extra trailing searches to keep
+ * everyone busy for the same number of ticks.
+ */
+function addSearchPadding(
+  assignment: Map<string, Pos[]>,
+  robots: Robot[],
+  cols: number,
+  rows: number,
+  paddingPerTarget: number,
+  dirtySet: Set<string>,
+): Map<string, Pos[]> {
+  const padded = new Map<string, Pos[]>();
+
+  for (const robot of robots) {
+    const targets = assignment.get(robot.id) ?? [];
+    const withPadding: Pos[] = [];
+
+    for (const target of targets) {
+      for (let p = 0; p < paddingPerTarget; p++) {
+        let rx: number, ry: number, attempts = 0;
+        do {
+          rx = Math.floor(Math.random() * cols);
+          ry = Math.floor(Math.random() * rows);
+          attempts++;
+        } while (dirtySet.has(`${rx},${ry}`) && attempts < 30);
+        withPadding.push({ x: rx, y: ry });
+      }
+      withPadding.push(target);
+    }
+
+    padded.set(robot.id, withPadding);
+  }
+
+  // Equalize: pad shorter queues so ALL robots move the same number of ticks
+  let maxLen = 0;
+  for (const q of padded.values()) {
+    if (q.length > maxLen) maxLen = q.length;
+  }
+
+  for (const robot of robots) {
+    const queue = padded.get(robot.id)!;
+    while (queue.length < maxLen) {
+      let rx: number, ry: number, attempts = 0;
+      do {
+        rx = Math.floor(Math.random() * cols);
+        ry = Math.floor(Math.random() * rows);
+        attempts++;
+      } while (dirtySet.has(`${rx},${ry}`) && attempts < 30);
+      queue.push({ x: rx, y: ry });
     }
   }
 
-  // Also add any remaining 4-direction moves not yet in the list (full detour fallback)
-  const all4 = [
-    { x: rx + 1, y: ry }, { x: rx - 1, y: ry },
-    { x: rx, y: ry + 1 }, { x: rx, y: ry - 1 },
-  ];
-  for (const a of all4) {
-    if (!moves.some((m) => m.x === a.x && m.y === a.y)) moves.push(a);
+  return padded;
+}
+
+/**
+ * Progressive assignment — all robots always move together.
+ *
+ * Experience controls search overhead (extra "wandering" steps):
+ *   Level 0:  4 search steps before each trash  → many ticks
+ *   Level 1:  2 search steps before each trash  → fewer ticks
+ *   Level 2:  1 search step before each trash   → even fewer
+ *   Level 3+: 0 search steps, optimal strategy  → minimum ticks
+ *
+ * All robots share work equally and stay busy for the same number of ticks.
+ */
+function assignTargets(
+  robots: Robot[],
+  dirtyCells: Pos[],
+  cols: number,
+  rows: number,
+): Map<string, Pos[]> {
+  const empty = new Map<string, Pos[]>();
+  for (const r of robots) empty.set(r.id, []);
+  if (dirtyCells.length === 0 || robots.length === 0) return empty;
+
+  const similar = findSimilarSessions(cols, rows, dirtyCells.length, robots.length);
+  const experience = similar.length;
+
+  // Always start with balanced distribution so all robots get targets
+  const idealCap = Math.ceil(dirtyCells.length / robots.length);
+  let base: Map<string, Pos[]>;
+
+  if (experience >= 3) {
+    // Multi-strategy: try several, pick the one with fewest ticks
+    const candidates: Map<string, Pos[]>[] = [
+      assignBalanced(robots, dirtyCells, idealCap),
+      assignGlobalNearest(robots, dirtyCells),
+      assignBalanced(robots, dirtyCells, Math.max(1, idealCap - 1)),
+      assignBalanced(robots, dirtyCells, idealCap + 1),
+    ];
+
+    if (similar.length > 0) {
+      const bestPast = similar.reduce((a, b) => (a.totalTicks < b.totalTicks ? a : b));
+      const bestMax = Math.max(...bestPast.robots.map((r) => r.trashCollected));
+      if (bestMax !== idealCap) {
+        candidates.push(assignBalanced(robots, dirtyCells, bestMax));
+      }
+    }
+
+    base = candidates[0];
+    let bestCost = assignmentCost(base);
+    for (let i = 1; i < candidates.length; i++) {
+      const cost = assignmentCost(candidates[i]);
+      if (cost < bestCost) {
+        bestCost = cost;
+        base = candidates[i];
+      }
+    }
+
+    return base;
   }
 
-  for (const m of moves) {
-    if (m.x >= 0 && m.x < cols && m.y >= 0 && m.y < rows && !occupied.has(`${m.x},${m.y}`)) {
-      return m;
-    }
+  // Levels 0–2: balanced base + search padding
+  base = assignBalanced(robots, dirtyCells, idealCap);
+
+  const paddingLevels = [4, 2, 1];
+  const padding = paddingLevels[experience] ?? 0;
+
+  if (padding > 0) {
+    const dirtySet = new Set(dirtyCells.map((c) => `${c.x},${c.y}`));
+    return addSearchPadding(base, robots, cols, rows, padding, dirtySet);
   }
-  return null;
+
+  return base;
 }
 
 const DEFAULT_DELAY_MS = 500;
@@ -101,14 +226,11 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
   const [playing, setPlaying] = useState(false);
   const [cleaningComplete, setCleaningComplete] = useState(false);
   const [stats, setStats] = useState<RobotStats[]>([]);
+  const [tickCount, setTickCount] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const gridRef = useRef<GridState | null>(grid);
-  const statsRef = useRef<Map<string, {
-    cellsTraversed: number;
-    trashCollected: number;
-    visitedCells: { x: number; y: number }[];
-    cleanedCells: { x: number; y: number }[];
-  }>>(new Map());
+  const tickRef = useRef(0);
+  const statsRef = useRef<Map<string, { trashCollected: number; cleanedCells: { x: number; y: number }[] }>>(new Map());
 
   useEffect(() => { gridRef.current = grid; }, [grid]);
 
@@ -122,14 +244,15 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
       }
     }
 
-    const assignment = assignTargets(g.robots, dirtyCells);
-    const robots = g.robots.map((r) => ({ ...r, targets: assignment.get(r.id) ?? [] }));
+    const assignment = assignTargets(g.robots, dirtyCells, g.cols, g.rows);
+    const robots = g.robots.map((r) => ({
+      ...r,
+      targets: assignment.get(r.id) ?? [],
+      idle: (assignment.get(r.id) ?? []).length === 0,
+    }));
 
-    const sm = new Map<string, {
-      cellsTraversed: number; trashCollected: number;
-      visitedCells: { x: number; y: number }[]; cleanedCells: { x: number; y: number }[];
-    }>();
-    for (const r of robots) sm.set(r.id, { cellsTraversed: 0, trashCollected: 0, visitedCells: [{ x: r.x, y: r.y }], cleanedCells: [] });
+    const sm = new Map<string, { trashCollected: number; cleanedCells: { x: number; y: number }[] }>();
+    for (const r of robots) sm.set(r.id, { trashCollected: 0, cleanedCells: [] });
     statsRef.current = sm;
 
     return { ...g, robots };
@@ -139,125 +262,50 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
     const g = gridRef.current;
     if (!g || g.robots.length === 0) return false;
 
-    const robots = g.robots;
-    const nextCells = g.cells.map((row) => row.map((c) => ({ ...c, trailColors: [...c.trailColors] })));
-    const nextRobots: Robot[] = robots.map((r) => ({ ...r, targets: [...r.targets] }));
+    tickRef.current++;
+    setTickCount(tickRef.current);
+
+    const nextCells = g.cells.map((row) => row.map((c) => ({ ...c, justCleaned: false })));
+    const nextRobots: Robot[] = g.robots.map((r) => ({ ...r, targets: [...r.targets] }));
     const sm = statsRef.current;
 
-    for (let i = 0; i < robots.length; i++) {
-      const robot = nextRobots[i];
-      const cell = nextCells[robot.y][robot.x];
-
-      // Mark trail on current cell
-      if (!cell.trailColors.includes(robot.color)) {
-        cell.trailColors = [...cell.trailColors, robot.color];
+    for (const robot of nextRobots) {
+      if (robot.targets.length === 0) {
+        robot.idle = true;
+        continue;
       }
 
+      // Teleport to next target
+      const target = robot.targets.shift()!;
+      robot.x = target.x;
+      robot.y = target.y;
+
+      // Clean
+      const cell = nextCells[target.y][target.x];
       if (cell.dirty) {
-        // Clean this cell
-        nextCells[robot.y][robot.x] = { ...cell, dirty: false, trailColors: cell.trailColors };
+        nextCells[target.y][target.x] = { ...cell, dirty: false, justCleaned: true };
         const s = sm.get(robot.id);
         if (s) {
           s.trashCollected++;
-          s.cleanedCells.push({ x: robot.x, y: robot.y });
-        }
-        // Remove this cell from ALL robots' targets (another robot may have it too, or passed through)
-        for (const r of nextRobots) {
-          r.targets = r.targets.filter((t) => !(t.x === robot.x && t.y === robot.y));
-        }
-      } else {
-        // Purge targets that are already clean (another robot cleaned them en route)
-        while (robot.targets.length > 0 && !nextCells[robot.targets[0].y][robot.targets[0].x].dirty) {
-          robot.targets.shift();
-        }
-
-        const occupied = new Set<string>();
-        for (let j = 0; j < nextRobots.length; j++) {
-          if (j === i) continue;
-          occupied.add(`${nextRobots[j].x},${nextRobots[j].y}`);
-        }
-
-        if (robot.targets.length > 0) {
-          // Move toward next target
-          const target = robot.targets[0];
-          const next = stepToward(robot.x, robot.y, target.x, target.y, occupied, g.cols, g.rows);
-          if (next) {
-            robot.x = next.x;
-            robot.y = next.y;
-            const s = sm.get(robot.id);
-            if (s) { s.cellsTraversed++; s.visitedCells.push({ x: next.x, y: next.y }); }
-          }
-        } else {
-          // Idle: wander randomly to clear paths for other robots
-          const adj = [
-            { x: robot.x + 1, y: robot.y }, { x: robot.x - 1, y: robot.y },
-            { x: robot.x, y: robot.y + 1 }, { x: robot.x, y: robot.y - 1 },
-          ].filter(
-            (m) => m.x >= 0 && m.x < g.cols && m.y >= 0 && m.y < g.rows && !occupied.has(`${m.x},${m.y}`)
-          );
-          if (adj.length > 0) {
-            const pick = adj[Math.floor(Math.random() * adj.length)];
-            robot.x = pick.x;
-            robot.y = pick.y;
-            const s = sm.get(robot.id);
-            if (s) { s.cellsTraversed++; s.visitedCells.push({ x: pick.x, y: pick.y }); }
-          }
+          s.cleanedCells.push({ x: target.x, y: target.y });
         }
       }
-    }
 
-    // Reassign orphaned dirty cells to idle robots
-    const remainingDirty: { x: number; y: number }[] = [];
-    const assignedSet = new Set<string>();
-    for (const r of nextRobots) {
-      for (const t of r.targets) assignedSet.add(`${t.x},${t.y}`);
-    }
-    for (const row of nextCells) {
-      for (const c of row) {
-        if (c.dirty && !assignedSet.has(`${c.x},${c.y}`)) {
-          remainingDirty.push({ x: c.x, y: c.y });
-        }
-      }
-    }
-    if (remainingDirty.length > 0) {
-      for (const dirty of remainingDirty) {
-        // Find closest idle robot (no targets), or closest robot overall
-        let bestRobot: Robot | null = null;
-        let bestDist = Infinity;
-        for (const r of nextRobots) {
-          const d = manhattan(r.x, r.y, dirty.x, dirty.y);
-          if (r.targets.length === 0 && d < bestDist) {
-            bestDist = d;
-            bestRobot = r;
-          }
-        }
-        // If no idle robot, assign to whichever robot is closest
-        if (!bestRobot) {
-          for (const r of nextRobots) {
-            const d = manhattan(r.x, r.y, dirty.x, dirty.y);
-            if (d < bestDist) { bestDist = d; bestRobot = r; }
-          }
-        }
-        if (bestRobot) bestRobot.targets.push(dirty);
-      }
+      robot.idle = robot.targets.length === 0;
     }
 
     const nextState = { ...g, cells: nextCells, robots: nextRobots };
     const hasDirty = nextState.cells.some((row) => row.some((c) => c.dirty));
+    const allDone = nextRobots.every((r) => r.targets.length === 0);
 
     setGrid(nextState);
 
-    if (!hasDirty) {
+    if (!hasDirty && allDone) {
       setPlaying(false);
       setCleaningComplete(true);
-      // Build final stats
       const finalStats: RobotStats[] = nextRobots.map((r) => {
-        const s = sm.get(r.id) ?? { cellsTraversed: 0, trashCollected: 0, visitedCells: [], cleanedCells: [] };
-        return {
-          id: r.id, color: r.color,
-          cellsTraversed: s.cellsTraversed, trashCollected: s.trashCollected,
-          visitedCells: s.visitedCells, cleanedCells: s.cleanedCells,
-        };
+        const s = sm.get(r.id) ?? { trashCollected: 0, cleanedCells: [] };
+        return { id: r.id, color: r.color, trashCollected: s.trashCollected, cleanedCells: s.cleanedCells };
       });
       setStats(finalStats);
     }
@@ -274,6 +322,8 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
 
   const play = useCallback(() => {
     if (!grid) return;
+    tickRef.current = 0;
+    setTickCount(0);
     const withTargets = initTargets(grid);
     setGrid(withTargets);
     gridRef.current = withTargets;
@@ -294,5 +344,5 @@ export function useSimulation(initialGrid: GridState | null, delayMs: number = D
     setGrid(newGrid);
   }, [pause]);
 
-  return { grid, setGrid: setGridFromState, playing, cleaningComplete, stats, play, pause, reset };
+  return { grid, setGrid: setGridFromState, playing, cleaningComplete, stats, tickCount, play, pause, reset };
 }
