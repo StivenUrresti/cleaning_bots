@@ -45,7 +45,9 @@ export function buildSessionRecord(
 ): SessionRecord {
   const totalTrash = stats.reduce((s, r) => s + r.trashCollected, 0);
   return {
-    id: crypto.randomUUID(),
+    id: typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
     timestamp: new Date().toISOString(),
     cols,
     rows,
