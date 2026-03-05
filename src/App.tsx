@@ -1,6 +1,6 @@
 import { useMemo, useCallback, useState, useEffect, useRef } from 'react';
 import Confetti from 'react-confetti';
-import { CheckCircle2, X, Download, History, Trash2, RotateCcw } from 'lucide-react';
+import { CheckCircle2, X, Download, History, Trash2, RotateCcw, UserMinus } from 'lucide-react';
 import { ConfigPanel, SPEED_MS_MIN, SPEED_MS_MAX } from './components/ConfigPanel';
 import { Grid } from './components/Grid';
 import { StatsPanel } from './components/StatsPanel';
@@ -111,6 +111,24 @@ export default function App() {
     setShowHistory(false);
   }, [reset]);
 
+  const handleReplayWithFewerRobots = useCallback((session: SessionRecord) => {
+    const fewerRobots = session.robotCount <= 1
+      ? 1
+      : Math.floor(Math.random() * (session.robotCount - 1)) + 1;
+    autoSavedRef.current = false;
+    setCols(session.cols);
+    setRows(session.rows);
+    setSpeedMs(session.speedMs);
+    const newGrid = generateRandomGrid({
+      cols: session.cols,
+      rows: session.rows,
+      dirtyCount: session.totalTrash,
+      robotCount: fewerRobots,
+    });
+    reset(newGrid);
+    setShowHistory(false);
+  }, [reset]);
+
   const handleClearHistory = useCallback(() => {
     clearHistory();
     setShowHistory(false);
@@ -130,15 +148,6 @@ export default function App() {
   const bestPreviousTicks = pastSessions.length > 0
     ? Math.min(...pastSessions.map((s) => s.totalTicks))
     : null;
-  // Experience = number of similar sessions BEFORE this one
-  const experienceLevel = pastSessions.length;
-  const experienceLabels = [
-    { label: 'Ingenuo', desc: 'Robots buscan por toda la grilla, 4 pasos de búsqueda por cada basura', color: 'text-red-400' },
-    { label: 'Aprendiz', desc: 'Búsqueda reducida a 2 pasos extra por basura', color: 'text-amber-400' },
-    { label: 'Competente', desc: 'Solo 1 paso extra de búsqueda por basura', color: 'text-cyan-400' },
-    { label: 'Experto', desc: 'Sin pasos extra, robots van directo a la basura', color: 'text-emerald-400' },
-  ];
-  const expInfo = experienceLabels[Math.min(experienceLevel, experienceLabels.length - 1)];
 
   return (
     <div className="h-screen bg-gray-950 text-gray-100 flex flex-col overflow-hidden">
@@ -174,61 +183,31 @@ export default function App() {
                 ¡Limpieza completada!
               </h2>
               <p className="mt-1 text-gray-400 text-sm">
-                Todas las celdas están limpias. Sesión guardada automáticamente.
+                Sesión guardada automáticamente.
               </p>
 
-              {/* Experience level badge */}
-              <div className="mt-3 flex flex-col items-center gap-2">
-                <div className="flex items-center gap-2">
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${expInfo.color} bg-gray-800 border border-gray-700`}>
-                    Nivel: {expInfo.label}
-                  </span>
-                  <span className="text-[11px] text-gray-500">(ejecución #{experienceLevel + 1})</span>
+              <div className="mt-4 flex flex-col items-center gap-3">
+                <div className="px-5 py-3 rounded-xl bg-gray-800/80 border border-cyan-500/30">
+                  <p className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">Total de pasos</p>
+                  <p className="text-3xl font-bold text-cyan-400">{tickCount}</p>
                 </div>
-                <p className="text-[11px] text-gray-500 italic">{expInfo.desc}</p>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
-                <span className="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-sm">
-                  Pasos: <span className="text-cyan-400 font-bold">{tickCount}</span>
-                </span>
                 {bestPreviousTicks !== null && (
-                  <span className={`px-3 py-1.5 rounded-lg text-sm font-medium ${
+                  <p className={`text-sm font-medium ${
                     tickCount < bestPreviousTicks
-                      ? 'bg-emerald-900/40 border border-emerald-600/50 text-emerald-400'
+                      ? 'text-emerald-400'
                       : tickCount === bestPreviousTicks
-                        ? 'bg-gray-800 border border-gray-700 text-gray-400'
-                        : 'bg-amber-900/40 border border-amber-600/50 text-amber-400'
+                        ? 'text-gray-400'
+                        : 'text-amber-400'
                   }`}>
                     {tickCount < bestPreviousTicks
-                      ? `Mejoró ${Math.round((1 - tickCount / bestPreviousTicks) * 100)}%`
+                      ? `Mejoró ${Math.round((1 - tickCount / bestPreviousTicks) * 100)}% respecto al mejor anterior (${bestPreviousTicks} pasos)`
                       : tickCount === bestPreviousTicks
-                        ? 'Mismo resultado'
-                        : `+${Math.round((tickCount / bestPreviousTicks - 1) * 100)}% vs anterior`
+                        ? `Mismo resultado que el mejor anterior (${bestPreviousTicks} pasos)`
+                        : `Mejor anterior: ${bestPreviousTicks} pasos`
                     }
-                    <span className="text-xs ml-1 opacity-70">(antes: {bestPreviousTicks})</span>
-                  </span>
+                  </p>
                 )}
               </div>
-
-              {/* Progress bar showing experience progression */}
-              {experienceLevel < 3 && (
-                <div className="mt-3 w-full max-w-xs mx-auto">
-                  <div className="flex justify-between text-[10px] text-gray-500 mb-1">
-                    <span>Ingenuo</span>
-                    <span>Experto</span>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-red-500 via-amber-500 to-emerald-500"
-                      style={{ width: `${Math.min(100, ((experienceLevel + 1) / 4) * 100)}%` }}
-                    />
-                  </div>
-                  <p className="text-[10px] text-gray-500 mt-1">
-                    Repite {3 - experienceLevel} vez(es) más para llegar a nivel Experto
-                  </p>
-                </div>
-              )}
             </div>
             <StatsPanel stats={stats} />
             <div className="flex flex-wrap gap-3 mt-2 justify-center">
@@ -284,9 +263,6 @@ export default function App() {
                 const runNumber = similars.indexOf(s) + 1;
                 const isRepeat = similars.length > 1;
                 const prevInGroup = similars[similars.indexOf(s) - 1];
-                const expLabels = ['Ingenuo', 'Aprendiz', 'Competente', 'Experto'];
-                const expColors = ['text-red-400', 'text-amber-400', 'text-cyan-400', 'text-emerald-400'];
-                const runExp = Math.min(runNumber - 1, 3);
 
                 return (
                   <div key={s.id} className={`rounded-lg bg-gray-800/80 border p-3 ${isRepeat ? 'border-cyan-700/40' : 'border-gray-700/60'}`}>
@@ -298,9 +274,6 @@ export default function App() {
                             #{runNumber}
                           </span>
                         )}
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded bg-gray-700/60 font-medium ${expColors[runExp]}`}>
-                          {expLabels[runExp]}
-                        </span>
                       </div>
                       <span className="text-xs text-gray-500">{new Date(s.timestamp).toLocaleString('es-CO')}</span>
                     </div>
@@ -339,14 +312,26 @@ export default function App() {
                         </span>
                       ))}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleReplay(s)}
-                      className="mt-2 flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-cyan-800/40 hover:bg-cyan-700/50 text-cyan-300 text-[11px] font-medium transition-colors"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      Repetir condiciones
-                    </button>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleReplay(s)}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-cyan-800/40 hover:bg-cyan-700/50 text-cyan-300 text-[11px] font-medium transition-colors"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        Repetir condiciones
+                      </button>
+                      {s.robotCount > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleReplayWithFewerRobots(s)}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-800/40 hover:bg-amber-700/50 text-amber-300 text-[11px] font-medium transition-colors"
+                        >
+                          <UserMinus className="w-3 h-3" />
+                          Menos robots (aleatorio, 1 a {s.robotCount - 1})
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}

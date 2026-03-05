@@ -75,6 +75,20 @@ export function findSimilarSessions(
   );
 }
 
+/**
+ * Find past sessions with the same grid and trash count (any robot count).
+ * Used for experience so that "Menos robots" runs inherit optimization and get fewer steps.
+ */
+export function findSimilarSessionsByGrid(
+  cols: number,
+  rows: number,
+  totalTrash: number,
+): SessionRecord[] {
+  return loadHistory().filter(
+    (s) => s.cols === cols && s.rows === rows && s.totalTrash === totalTrash
+  );
+}
+
 export function exportHistoryAsText(history: SessionRecord[]): string {
   if (history.length === 0) return 'No hay sesiones guardadas.';
 

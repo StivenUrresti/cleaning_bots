@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { GridState, Robot, RobotStats } from '../types/grid';
-import { findSimilarSessions } from '../utils/history';
+import { findSimilarSessions, findSimilarSessionsByGrid } from '../utils/history';
 
 function manhattan(ax: number, ay: number, bx: number, by: number) {
   return Math.abs(ax - bx) + Math.abs(ay - by);
@@ -168,8 +168,15 @@ function assignTargets(
   for (const r of robots) empty.set(r.id, []);
   if (dirtyCells.length === 0 || robots.length === 0) return empty;
 
-  const similar = findSimilarSessions(cols, rows, dirtyCells.length, robots.length);
-  const experience = similar.length;
+  // Use grid+trash only so "Menos robots" runs inherit experience → fewer steps
+  const similar = findSimilarSessionsByGrid(cols, rows, dirtyCells.length);
+  let experience = Math.min(similar.length, 4);
+
+  // Si esta ejecución tiene MENOS robots que todas las sesiones previas (misma grilla+basura),
+  // forzar experiencia máxima para que los pasos bajen respecto a la sesión que repitió
+  if (similar.length > 0 && robots.length < Math.min(...similar.map((s) => s.robotCount))) {
+    experience = 3;
+  }
 
   // Always start with balanced distribution so all robots get targets
   const idealCap = Math.ceil(dirtyCells.length / robots.length);
